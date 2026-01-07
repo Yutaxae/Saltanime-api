@@ -49,6 +49,7 @@ app.get('/scrape', async (req, res) => {
 // ============================================
 // Usage: GET /stream?url=<m3u8_url>&referer=<referer_url>
 // This allows browsers to play HLS streams that require specific headers
+// Also rewrites relative URLs in m3u8 files to absolute CDN URLs
 
 app.get('/stream', async (req, res) => {
     const { url, referer } = req.query;
@@ -58,11 +59,14 @@ app.get('/stream', async (req, res) => {
     }
 
     try {
+        const parsedUrl = new URL(url);
+        const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
+
         const response = await fetch(url, {
             headers: {
-                'Referer': referer || new URL(url).origin,
+                'Referer': referer || baseUrl,
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Origin': referer ? new URL(referer).origin : new URL(url).origin
+                'Origin': referer ? new URL(referer).origin : baseUrl
             }
         });
 
@@ -73,25 +77,72 @@ app.get('/stream', async (req, res) => {
             });
         }
 
-        const contentType = response.headers.get('content-type');
-        if (contentType) {
-            res.setHeader('Content-Type', contentType);
+        const contentType = response.headers.get('content-type') || '';
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+
+        // Check if this is an m3u8 file (HLS manifest)
+        const isM3u8 = url.includes('.m3u8') || contentType.includes('mpegurl') || contentType.includes('x-mpegURL');
+
+        if (isM3u8) {
+            // For m3u8 files, we need to rewrite relative URLs to use our proxy
+            const text = await response.text();
+
+            // Rewrite relative URLs to absolute CDN URLs
+            // This handles paths like: /hls/xxx/audio.m3u8, /cdn/xxx/segment.ts, etc.
+            let rewrittenContent = text
+                // Replace absolute paths starting with / 
+                .replace(/^((?!#).*)$/gm, (line) => {
+                    // Skip comments and empty lines
+                    if (line.startsWith('#') || line.trim() === '') return line;
+
+                    // If it's a relative URL (starts with /)
+                    if (line.startsWith('/')) {
+                        return `${baseUrl}${line}`;
+                    }
+                    // If it's already absolute URL, leave it
+                    if (line.startsWith('http://') || line.startsWith('https://')) {
+                        return line;
+                    }
+                    // For other relative paths (no leading /), make absolute based on manifest directory
+                    const manifestDir = url.substring(0, url.lastIndexOf('/') + 1);
+                    return `${manifestDir}${line}`;
+                })
+                // Also fix URI= attributes in #EXT-X-MEDIA and similar tags
+                .replace(/URI="([^"]+)"/g, (match, uri) => {
+                    if (uri.startsWith('/')) {
+                        return `URI="${baseUrl}${uri}"`;
+                    } else if (uri.startsWith('http://') || uri.startsWith('https://')) {
+                        return match; // Already absolute
+                    } else {
+                        const manifestDir = url.substring(0, url.lastIndexOf('/') + 1);
+                        return `URI="${manifestDir}${uri}"`;
+                    }
+                });
+
+            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+            res.send(rewrittenContent);
+        } else {
+            // For non-m3u8 files (video/audio segments), just pipe through
+            if (contentType) {
+                res.setHeader('Content-Type', contentType);
+            }
+
+            const reader = response.body.getReader();
+            const pump = async () => {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    res.write(value);
+                }
+                res.end();
+            };
+            pump().catch(() => res.end());
         }
 
-        res.setHeader('Access-Control-Allow-Origin', '*');
-
-        const reader = response.body.getReader();
-        const pump = async () => {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                res.write(value);
-            }
-            res.end();
-        };
-        pump().catch(() => res.end());
-
     } catch (error) {
+        console.error('Stream proxy error:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
