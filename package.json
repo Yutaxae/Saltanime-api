@@ -1,0 +1,19 @@
+{
+    "name": "animesalt-scraper",
+    "version": "1.0.0",
+    "description": "Scraper for animesalt.top to extract HLS video links",
+    "main": "scraper.js",
+    "scripts": {
+        "test": "node run_scraper.js",
+        "start": "node server.js"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "express": "^5.2.1",
+        "node-cache": "^5.1.2",
+        "playwright": "^1.40.0",
+        "playwright-extra": "^4.3.6",
+        "puppeteer-extra-plugin-stealth": "^2.11.2",
+        "user-agents": "^1.1.669"
+    }
+}
