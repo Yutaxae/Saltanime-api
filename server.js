@@ -64,7 +64,9 @@ app.get('/stream', async (req, res) => {
         const effectiveReferer = referer || baseUrl;
 
         // Get our own host for proxying (works in both local and deployed)
-        const proxyBase = `${req.protocol}://${req.get('host')}`;
+        // Use HTTPS in production (Render), HTTP for localhost
+        const protocol = req.get('host').includes('localhost') ? 'http' : 'https';
+        const proxyBase = `${protocol}://${req.get('host')}`;
 
         const response = await fetch(url, {
             headers: {
@@ -95,17 +97,30 @@ app.get('/stream', async (req, res) => {
 
             // Helper function to convert any URL to a proxied URL
             const toProxyUrl = (originalUrl) => {
-                let absoluteUrl = originalUrl;
-
-                // Convert to absolute URL first
-                if (originalUrl.startsWith('/')) {
-                    absoluteUrl = `${baseUrl}${originalUrl}`;
-                } else if (!originalUrl.startsWith('http://') && !originalUrl.startsWith('https://')) {
-                    const manifestDir = url.substring(0, url.lastIndexOf('/') + 1);
-                    absoluteUrl = `${manifestDir}${originalUrl}`;
+                // First decode if already encoded (prevent double-encoding)
+                let decodedUrl = originalUrl;
+                try {
+                    // Try decoding - if it changes, it was encoded
+                    const decoded = decodeURIComponent(originalUrl);
+                    if (decoded !== originalUrl) {
+                        decodedUrl = decoded;
+                    }
+                } catch (e) {
+                    // Not encoded or invalid, use as-is
+                    decodedUrl = originalUrl;
                 }
 
-                // Now wrap in proxy
+                let absoluteUrl = decodedUrl;
+
+                // Convert to absolute URL first
+                if (decodedUrl.startsWith('/')) {
+                    absoluteUrl = `${baseUrl}${decodedUrl}`;
+                } else if (!decodedUrl.startsWith('http://') && !decodedUrl.startsWith('https://')) {
+                    const manifestDir = url.substring(0, url.lastIndexOf('/') + 1);
+                    absoluteUrl = `${manifestDir}${decodedUrl}`;
+                }
+
+                // Now wrap in proxy (single encode)
                 return `${proxyBase}/stream?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(effectiveReferer)}`;
             };
 
