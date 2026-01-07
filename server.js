@@ -49,7 +49,7 @@ app.get('/scrape', async (req, res) => {
 // ============================================
 // Usage: GET /stream?url=<m3u8_url>&referer=<referer_url>
 // This allows browsers to play HLS streams that require specific headers
-// Also rewrites relative URLs in m3u8 files to absolute CDN URLs
+// Rewrites all URLs in m3u8 files to go through this proxy
 
 app.get('/stream', async (req, res) => {
     const { url, referer } = req.query;
@@ -61,12 +61,16 @@ app.get('/stream', async (req, res) => {
     try {
         const parsedUrl = new URL(url);
         const baseUrl = `${parsedUrl.protocol}//${parsedUrl.host}`;
+        const effectiveReferer = referer || baseUrl;
+
+        // Get our own host for proxying (works in both local and deployed)
+        const proxyBase = `${req.protocol}://${req.get('host')}`;
 
         const response = await fetch(url, {
             headers: {
-                'Referer': referer || baseUrl,
+                'Referer': effectiveReferer,
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Origin': referer ? new URL(referer).origin : baseUrl
+                'Origin': new URL(effectiveReferer).origin
             }
         });
 
@@ -86,39 +90,39 @@ app.get('/stream', async (req, res) => {
         const isM3u8 = url.includes('.m3u8') || contentType.includes('mpegurl') || contentType.includes('x-mpegURL');
 
         if (isM3u8) {
-            // For m3u8 files, we need to rewrite relative URLs to use our proxy
+            // For m3u8 files, rewrite ALL URLs to go through our proxy
             const text = await response.text();
 
-            // Rewrite relative URLs to absolute CDN URLs
-            // This handles paths like: /hls/xxx/audio.m3u8, /cdn/xxx/segment.ts, etc.
+            // Helper function to convert any URL to a proxied URL
+            const toProxyUrl = (originalUrl) => {
+                let absoluteUrl = originalUrl;
+
+                // Convert to absolute URL first
+                if (originalUrl.startsWith('/')) {
+                    absoluteUrl = `${baseUrl}${originalUrl}`;
+                } else if (!originalUrl.startsWith('http://') && !originalUrl.startsWith('https://')) {
+                    const manifestDir = url.substring(0, url.lastIndexOf('/') + 1);
+                    absoluteUrl = `${manifestDir}${originalUrl}`;
+                }
+
+                // Now wrap in proxy
+                return `${proxyBase}/stream?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(effectiveReferer)}`;
+            };
+
+            // Rewrite content
             let rewrittenContent = text
-                // Replace absolute paths starting with / 
-                .replace(/^((?!#).*)$/gm, (line) => {
+                // Replace line-based URLs (video/audio segments, variant playlists)
+                .split('\n')
+                .map(line => {
                     // Skip comments and empty lines
                     if (line.startsWith('#') || line.trim() === '') return line;
-
-                    // If it's a relative URL (starts with /)
-                    if (line.startsWith('/')) {
-                        return `${baseUrl}${line}`;
-                    }
-                    // If it's already absolute URL, leave it
-                    if (line.startsWith('http://') || line.startsWith('https://')) {
-                        return line;
-                    }
-                    // For other relative paths (no leading /), make absolute based on manifest directory
-                    const manifestDir = url.substring(0, url.lastIndexOf('/') + 1);
-                    return `${manifestDir}${line}`;
+                    // This is a URL line - proxy it
+                    return toProxyUrl(line.trim());
                 })
+                .join('\n')
                 // Also fix URI= attributes in #EXT-X-MEDIA and similar tags
                 .replace(/URI="([^"]+)"/g, (match, uri) => {
-                    if (uri.startsWith('/')) {
-                        return `URI="${baseUrl}${uri}"`;
-                    } else if (uri.startsWith('http://') || uri.startsWith('https://')) {
-                        return match; // Already absolute
-                    } else {
-                        const manifestDir = url.substring(0, url.lastIndexOf('/') + 1);
-                        return `URI="${manifestDir}${uri}"`;
-                    }
+                    return `URI="${toProxyUrl(uri)}"`;
                 });
 
             res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -127,6 +131,12 @@ app.get('/stream', async (req, res) => {
             // For non-m3u8 files (video/audio segments), just pipe through
             if (contentType) {
                 res.setHeader('Content-Type', contentType);
+            }
+
+            // Get content length for proper streaming
+            const contentLength = response.headers.get('content-length');
+            if (contentLength) {
+                res.setHeader('Content-Length', contentLength);
             }
 
             const reader = response.body.getReader();
