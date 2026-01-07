@@ -16,7 +16,7 @@ async function getBrowser() {
         return browserInstance;
     }
 
-    console.log('Launching new browser instance...');
+
     browserInstance = await chromium.launch({
         headless: true, // Use headless mode for better HLS/media support
         args: [
@@ -85,11 +85,11 @@ async function scrapeVideoSource(episodeUrl, proxyUrl = null, retries = 2) {
             // Random stealth delay
             const randomDelay = (min, max) => new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1) + min)));
 
-            console.log(`[Attempt ${attempt}] Navigating to: ${episodeUrl}`);
+
             await randomDelay(500, 1500); // Shorter delay since we are faster now
             await page.goto(episodeUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
 
-            console.log('Waiting for player iframe...');
+
 
             // Wait for the iframe to appear
             const iframeElement = await page.waitForSelector('iframe[src*="zephyrflick"], iframe[src*="player"], iframe[src*="video"]', { timeout: 10000 });
@@ -97,7 +97,7 @@ async function scrapeVideoSource(episodeUrl, proxyUrl = null, retries = 2) {
 
             if (!iframeSrc) throw new Error('Iframe found but has no src attribute.');
 
-            console.log('Found player iframe: ' + iframeSrc);
+
 
             await page.goto(iframeSrc, {
                 referer: episodeUrl,
@@ -112,14 +112,14 @@ async function scrapeVideoSource(episodeUrl, proxyUrl = null, retries = 2) {
             }, null, { timeout: 10000 });
 
             // IMPORTANT: Audio tracks only populate AFTER video starts playing (HLS manifest parsed)
-            console.log('Triggering video playback to load audio tracks...');
+
             await page.evaluate(() => window.jwplayer().play());
 
             // Wait for HLS manifest to download and parse (audio tracks come from manifest)
-            console.log('Waiting 4 seconds for HLS manifest to parse...');
+
             await new Promise(r => setTimeout(r, 4000));
 
-            console.log('Waiting for audio/caption tracks to populate (up to 10s)...');
+
             try {
                 await page.waitForFunction(() => {
                     const p = window.jwplayer();
@@ -129,13 +129,13 @@ async function scrapeVideoSource(episodeUrl, proxyUrl = null, retries = 2) {
                     return hasTracks || hasCaptions;
                 }, null, { timeout: 10000 });
             } catch (e) {
-                console.log('Timeout waiting for tracks/captions. Proceeding with available data.');
+
             }
 
             // Pause playback after extracting
             await page.evaluate(() => window.jwplayer().pause());
 
-            console.log('Extracting video sources...');
+
 
             const videoData = await page.evaluate(() => {
                 try {
@@ -249,7 +249,7 @@ async function scrapeVideoSource(episodeUrl, proxyUrl = null, retries = 2) {
             };
 
         } catch (error) {
-            console.error(`Attempt ${attempt} failed: ${error.message}`);
+
             if (attempt > retries) {
                 throw error; // All retries failed
             }

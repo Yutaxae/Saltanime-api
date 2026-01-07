@@ -26,18 +26,16 @@ app.get('/scrape', async (req, res) => {
     const cacheKey = `${url}-${proxy || 'no-proxy'}`;
     const cachedResult = cache.get(cacheKey);
     if (cachedResult) {
-        console.log(`Serving cached result for: ${url}`);
         return res.json({ success: true, cached: true, ...cachedResult });
     }
 
-    console.log(`Received scrape request for: ${url}`);
+
 
     try {
         const result = await scrapeVideoSource(url, proxy);
         cache.set(cacheKey, result); // Store in cache
         res.json({ success: true, cached: false, ...result });
     } catch (error) {
-        console.error('Scraping failed:', error.message);
         res.status(500).json({
             success: false,
             error: error.message,
@@ -60,7 +58,6 @@ app.get('/stream', async (req, res) => {
     }
 
     try {
-        // Import fetch dynamically (Node 18+ has native fetch)
         const response = await fetch(url, {
             headers: {
                 'Referer': referer || new URL(url).origin,
@@ -76,16 +73,13 @@ app.get('/stream', async (req, res) => {
             });
         }
 
-        // Set appropriate headers for streaming
         const contentType = response.headers.get('content-type');
         if (contentType) {
             res.setHeader('Content-Type', contentType);
         }
 
-        // Allow CORS for all origins
         res.setHeader('Access-Control-Allow-Origin', '*');
 
-        // Pipe the response body to the client
         const reader = response.body.getReader();
         const pump = async () => {
             while (true) {
@@ -95,17 +89,12 @@ app.get('/stream', async (req, res) => {
             }
             res.end();
         };
-        pump().catch(err => {
-            console.error('Stream error:', err.message);
-            res.end();
-        });
+        pump().catch(() => res.end());
 
     } catch (error) {
-        console.error('Stream proxy error:', error.message);
         res.status(500).json({ error: error.message });
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+app.listen(PORT, () => { });
+
