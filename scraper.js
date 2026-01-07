@@ -18,7 +18,7 @@ async function getBrowser() {
 
     console.log('Launching new browser instance...');
     browserInstance = await chromium.launch({
-        headless: 'new', // Use new headless mode for better HLS/media support
+        headless: true, // Use headless mode for better HLS/media support
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
